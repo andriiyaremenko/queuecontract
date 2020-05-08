@@ -7,7 +7,7 @@ import (
 	"github.com/hyperledger/fabric-chaincode-go/shim"
 	"github.com/hyperledger/fabric-chaincode-go/shimtest"
 
-	//	"github.com/hyperledger/fabric/core/chaincode/shim"
+	pb "github.com/hyperledger/fabric-protos-go/peer"
 	"testing"
 )
 
@@ -69,15 +69,28 @@ func ActiveSorts(names []string) []domain.Sort {
 	return result
 }
 
-func TestQueueContract(t *testing.T) {
-	cc := NewQueueContract(ActiveFilters, ActiveSorts)
+func initQC() (*shimtest.MockStub, pb.Response) {
+	cc := NewQueueChaincode(ActiveFilters, ActiveSorts)
 	mockStub := shimtest.NewMockStub("Test", cc)
-	mockStub.MockInvoke("1", [][]byte{[]byte("Init")})
+	return mockStub, mockStub.MockInvoke("1", [][]byte{[]byte("Init")})
+}
+
+func TestQueueContractInit(t *testing.T) {
+	_, r := initQC()
+	if r.Status != shim.OK {
+		t.Errorf("Failed to invoke method: %v", r.GetMessage())
+	}
+}
+
+func TestQueueContractPut(t *testing.T) {
+	mockStub, _ := initQC()
 	r := mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":1}}`)})
 	if r.Status != shim.OK {
 		t.Errorf("Failed to invoke method: %v", r.GetMessage())
 	}
-	r = mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
+}
+
+func checkR(t *testing.T, r pb.Response, want int) {
 	if r.Status != shim.OK {
 		t.Errorf("Failed to invoke method: %v", r.GetMessage())
 	}
@@ -86,88 +99,88 @@ func TestQueueContract(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to invoke method: %v", err)
 	}
-	if v := int(i.Data["value"].(float64)); v != 1 {
-		t.Errorf(`Item.Data["value"] = %v; wanted = 1`, v)
+	if v := int(i.Data["value"].(float64)); v != want {
+		t.Errorf(`Item.Data["value"] = %v; wanted = %v`, v, want)
 	}
+}
+
+func TestQueueContractPeek(t *testing.T) {
+	mockStub, _ := initQC()
 	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":1}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":2}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":3}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":4}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":5}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":6}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":7}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":8}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":9}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":10}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":11}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":12}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":13}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":14}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("Put"), []byte(`{"data":{"value":15}}`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("AddFilter"), []byte(`odd`)})
-	r = mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
+	r := mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
+	checkR(t, r, 1)
+}
+
+func TestQueueContractSort(t *testing.T) {
+	mockStub, _ := initQC()
+	r := mockStub.MockInvoke(
+		"1",
+		[][]byte{
+			[]byte("Put"),
+			[]byte(`{"data":{"value":1}}`),
+			[]byte(`{"data":{"value":2}}`),
+			[]byte(`{"data":{"value":3}}`),
+		},
+	)
 	if r.Status != shim.OK {
 		t.Errorf("Failed to invoke method: %v", r.GetMessage())
-	}
-	i = new(domain.Item)
-	err = json.Unmarshal(r.GetPayload(), i)
-	if err != nil {
-		t.Errorf("Failed to invoke method: %v", err)
-	}
-	if v := int(i.Data["value"].(float64)); v != 2 {
-		t.Errorf(`Item.Data["value"] = %v; wanted = 2`, v)
-	}
-	mockStub.MockInvoke("1", [][]byte{[]byte("RemoveFilter"), []byte(`odd`)})
-	r = mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
-	if r.Status != shim.OK {
-		t.Errorf("Failed to invoke method: %v", r.GetMessage())
-	}
-	i = new(domain.Item)
-	err = json.Unmarshal(r.GetPayload(), i)
-	if err != nil {
-		t.Errorf("Failed to invoke method: %v", err)
-	}
-	if v := int(i.Data["value"].(float64)); v != 1 {
-		t.Errorf(`Item.Data["value"] = %v; wanted = 1`, v)
 	}
 	mockStub.MockInvoke("1", [][]byte{[]byte("AddSort"), []byte(`desc`)})
-	mockStub.MockInvoke("1", [][]byte{[]byte("AddFilter"), []byte(`odd`)})
 	r = mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
-	if r.Status != shim.OK {
-		t.Errorf("Failed to invoke method: %v", r.GetMessage())
-	}
-	i = new(domain.Item)
-	err = json.Unmarshal(r.GetPayload(), i)
-	if err != nil {
-		t.Errorf("Failed to invoke method: %v", err)
-	}
-	if v := int(i.Data["value"].(float64)); v != 14 {
-		t.Errorf(`Item.Data["value"] = %v; wanted = 14`, v)
-	}
-	mockStub.MockInvoke("1", [][]byte{[]byte("RemoveFilter"), []byte(`odd`)})
-	r = mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
-	if r.Status != shim.OK {
-		t.Errorf("Failed to invoke method: %v", r.GetMessage())
-	}
-	i = new(domain.Item)
-	err = json.Unmarshal(r.GetPayload(), i)
-	if err != nil {
-		t.Errorf("Failed to invoke method: %v", err)
-	}
-	if v := int(i.Data["value"].(float64)); v != 15 {
-		t.Errorf(`Item.Data["value"] = %v; wanted = 15`, v)
-	}
+	checkR(t, r, 3)
 	mockStub.MockInvoke("1", [][]byte{[]byte("RemoveSort"), []byte(`desc`)})
 	r = mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
+	checkR(t, r, 1)
+}
+
+func TestQueueContractFilter(t *testing.T) {
+	mockStub, _ := initQC()
+	r := mockStub.MockInvoke(
+		"1",
+		[][]byte{
+			[]byte("Put"),
+			[]byte(`{"data":{"value":1}}`),
+			[]byte(`{"data":{"value":2}}`),
+			[]byte(`{"data":{"value":3}}`),
+		},
+	)
 	if r.Status != shim.OK {
 		t.Errorf("Failed to invoke method: %v", r.GetMessage())
 	}
-	i = new(domain.Item)
-	err = json.Unmarshal(r.GetPayload(), i)
-	if err != nil {
-		t.Errorf("Failed to invoke method: %v", err)
+	mockStub.MockInvoke("1", [][]byte{[]byte("AddFilter"), []byte(`odd`)})
+	r = mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
+	checkR(t, r, 2)
+	mockStub.MockInvoke("1", [][]byte{[]byte("RemoveFilter"), []byte(`odd`)})
+	r = mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
+	checkR(t, r, 1)
+}
+
+func TestQueueContractFilterSort(t *testing.T) {
+	mockStub, _ := initQC()
+	r := mockStub.MockInvoke(
+		"1",
+		[][]byte{
+			[]byte("Put"),
+			[]byte(`{"data":{"value":1}}`),
+			[]byte(`{"data":{"value":2}}`),
+			[]byte(`{"data":{"value":3}}`),
+			[]byte(`{"data":{"value":4}}`),
+			[]byte(`{"data":{"value":5}}`),
+			[]byte(`{"data":{"value":6}}`),
+			[]byte(`{"data":{"value":7}}`),
+		},
+	)
+	if r.Status != shim.OK {
+		t.Errorf("Failed to invoke method: %v", r.GetMessage())
 	}
-	if v := int(i.Data["value"].(float64)); v != 3 {
-		t.Errorf(`Item.Data["value"] = %v; wanted = 3`, v)
-	}
+	mockStub.MockInvoke("1", [][]byte{[]byte("AddFilter"), []byte(`odd`)})
+	mockStub.MockInvoke("1", [][]byte{[]byte("AddSort"), []byte(`desc`)})
+	r = mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
+	checkR(t, r, 6)
+	mockStub.MockInvoke("1", [][]byte{[]byte("RemoveFilter"), []byte(`odd`)})
+	r = mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
+	checkR(t, r, 7)
+	mockStub.MockInvoke("1", [][]byte{[]byte("RemoveSort"), []byte(`desc`)})
+	r = mockStub.MockInvoke("1", [][]byte{[]byte("Peek")})
+	checkR(t, r, 1)
 }
