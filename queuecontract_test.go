@@ -39,7 +39,10 @@ func validators() ([]domain.Validator, error) {
 
 func mapToValueItem(item domain.Item) (ValueItem, bool) {
 	v, ok := item.Data["value"]
-	if value, convOk := v.(float64); ok && convOk {
+	if !ok {
+		return ValueItem{ItemId: item.Id}, true
+	}
+	if value, convOk := v.(float64); convOk {
 		return ValueItem{ItemId: item.Id, Value: int(value)}, true
 	}
 	return ValueItem{}, false
@@ -134,9 +137,6 @@ func checkR(t *testing.T, r pb.Response, want int) {
 	err := json.Unmarshal(r.GetPayload(), i)
 	if err != nil {
 		t.Errorf("Bad response: %v", err)
-	}
-	if _, ok := i.Data["value"]; !ok {
-		return
 	}
 	if v := int(i.Data["value"].(float64)); v != want {
 		t.Errorf(`Item.Data["value"] = %v; wanted = %v`, v, want)

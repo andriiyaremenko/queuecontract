@@ -110,6 +110,23 @@ filterLoop:
 }
 
 func (q *contract) Update(stub StateManager, data Payload, filters FilterRequest) error {
+	validators, err := q.validators()
+	if err != nil {
+		return errors.New(fmt.Sprintf("QueueContract.Update: %v", err))
+	}
+	var sb strings.Builder
+	sb.WriteString("QueueContract.Update: [\n")
+	hasErrors := false
+	for _, v := range validators {
+		if err := v.F(data); err != nil {
+			hasErrors = true
+			sb.WriteString(fmt.Sprintf("\tFailed validation: %s: %v\n", v.Name, err))
+		}
+	}
+	if hasErrors {
+		sb.WriteString("]")
+		return errors.New(sb.String())
+	}
 	context, err := q.getState(stub)
 	if err != nil {
 		return errors.New(fmt.Sprintf("QueueContract.Peek: %v", err))
@@ -118,18 +135,16 @@ func (q *contract) Update(stub StateManager, data Payload, filters FilterRequest
 	if err != nil {
 		return errors.New(fmt.Sprintf("QueueContract.Peek: %v", err))
 	}
-	currentItems := context.Items
-	var items []Item
 filterLoop:
-	for _, item := range currentItems {
+	for i, item := range context.Items {
 		for _, filter := range fs {
-			if !filter.F(item) {
+			if !filter.F(item, filters[filter.Name]...) {
 				continue filterLoop
 			}
 		}
-		item.Data = data
-		items = append(items, item)
+		context.Items[i].Data = data
 	}
+	q.setState(stub, context)
 	return nil
 }
 
