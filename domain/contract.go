@@ -2,7 +2,10 @@ package domain
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -10,49 +13,81 @@ import (
 type contract struct {
 	activeFilters ActiveFilters
 	activeSorts   ActiveSorts
+	validators    Validators
 }
 
-func NewContract(activeFilters ActiveFilters, activeSorts ActiveSorts) QueueContract {
-	return &contract{activeFilters, activeSorts}
+func NewContract(activeFilters ActiveFilters, activeSorts ActiveSorts, validators Validators) QueueContract {
+	return &contract{activeFilters, activeSorts, validators}
 }
 
-func (q *contract) Put(stub StateManager, items ...Item) error {
-	context, err := q.GetState(stub)
+func (q *contract) Init(stub StateManager, model *QueueContext) error {
+	return q.setState(stub, model)
+}
+
+func (q *contract) Put(stub StateManager, items ...Item) (ids []string, err error) {
+	validators, err := q.validators()
 	if err != nil {
-		return err
+		return nil, errors.New(fmt.Sprintf("QueueContract.Put: %v", err))
+	}
+	var sb strings.Builder
+	sb.WriteString("QueueContract.Put: [\n")
+	hasErrors := false
+	for _, v := range validators {
+		for _, i := range items {
+			if err := v.F(i.Data); err != nil {
+				hasErrors = true
+				sb.WriteString(fmt.Sprintf("\tFailed validation: %s: %v\n", v.Name, err))
+			}
+		}
+	}
+	if hasErrors {
+		sb.WriteString("]")
+		return nil, errors.New(sb.String())
+	}
+	context, err := q.getState(stub)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("QueueContract.Put: %v", err))
 	}
 	for _, item := range items {
-		item.Id = uuid.New().String()
+		id := uuid.New().String()
+		ids = append(ids, id)
+		item.Id = id
 		context.Items = append(context.Items, item)
 	}
-	err = q.SetState(stub, context)
+	err = q.setState(stub, context)
 	if err != nil {
-		return err
+		return nil, errors.New(fmt.Sprintf("QueueContract.Put: %v", err))
 	}
-	return nil
+	return
 }
 
-func (q *contract) Peek(stub StateManager) (item *Item, err error) {
-	context, err := q.GetState(stub)
+func (q *contract) Peek(stub StateManager, sorts SortRequest, filters FilterRequest) (item *Item, err error) {
+	context, err := q.getState(stub)
 	if err != nil {
-		return
+		return nil, errors.New(fmt.Sprintf("QueueContract.Peek: %v", err))
 	}
-	filters := q.activeFilters(context.Filters)
+	fs, err := q.activeFilters(filters)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("QueueContract.Peek: %v", err))
+	}
 	currentItems := context.Items
 	var items []Item
 filterLoop:
 	for _, item := range currentItems {
-		for _, filter := range filters {
-			if !filter.F(item) {
+		for _, filter := range fs {
+			if !filter.F(item, filters[filter.Name]...) {
 				continue filterLoop
 			}
 		}
 		items = append(items, item)
 	}
-	sorts := q.activeSorts(context.Sorts)
-	for _, s := range sorts {
+	ss, err := q.activeSorts(sorts)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("QueueContract.Peek: %v", err))
+	}
+	for _, s := range ss {
 		sort.Slice(items, func(first, second int) bool {
-			return s.F(items[first], items[second])
+			return s.F(items[first], items[second], sorts[s.Name]...)
 		})
 	}
 	if len(items) == 0 {
@@ -67,108 +102,58 @@ filterLoop:
 		resultItems = append(resultItems, v)
 	}
 	context.Items = resultItems
-	err = q.SetState(stub, context)
+	err = q.setState(stub, context)
 	if err != nil {
-		return nil, err
+		return nil, errors.New(fmt.Sprintf("QueueContract.Peek: %v", err))
 	}
 	return
 }
 
-func (q *contract) AddFilter(stub StateManager, filters ...string) error {
-	context, err := q.GetState(stub)
+func (q *contract) Update(stub StateManager, data Payload, filters FilterRequest) error {
+	context, err := q.getState(stub)
 	if err != nil {
-		return err
+		return errors.New(fmt.Sprintf("QueueContract.Peek: %v", err))
 	}
-	context.Filters = append(context.Filters, filters...)
-	err = q.SetState(stub, context)
+	fs, err := q.activeFilters(filters)
 	if err != nil {
-		return err
+		return errors.New(fmt.Sprintf("QueueContract.Peek: %v", err))
 	}
-	return nil
-}
-
-func (q *contract) RemoveFilter(stub StateManager, filters ...string) error {
-	context, err := q.GetState(stub)
-	if err != nil {
-		return err
-	}
-	fMap := make(map[string]struct{})
-	for _, f := range filters {
-		fMap[f] = struct{}{}
-	}
-	var remainingF []string
-	for _, f := range context.Filters {
-		if _, ok := fMap[f]; ok {
-			continue
+	currentItems := context.Items
+	var items []Item
+filterLoop:
+	for _, item := range currentItems {
+		for _, filter := range fs {
+			if !filter.F(item) {
+				continue filterLoop
+			}
 		}
-		remainingF = append(remainingF, f)
-	}
-	context.Filters = remainingF
-	err = q.SetState(stub, context)
-	if err != nil {
-		return err
+		item.Data = data
+		items = append(items, item)
 	}
 	return nil
 }
 
-func (q *contract) AddSort(stub StateManager, sorts ...string) error {
-	context, err := q.GetState(stub)
-	if err != nil {
-		return err
-	}
-	context.Sorts = append(context.Sorts, sorts...)
-	err = q.SetState(stub, context)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (q *contract) RemoveSort(stub StateManager, sorts ...string) error {
-	context, err := q.GetState(stub)
-	if err != nil {
-		return err
-	}
-	sMap := make(map[string]struct{})
-	for _, f := range sorts {
-		sMap[f] = struct{}{}
-	}
-	var remainingS []string
-	for _, s := range context.Sorts {
-		if _, ok := sMap[s]; ok {
-			continue
-		}
-		remainingS = append(remainingS, s)
-	}
-	context.Sorts = remainingS
-	err = q.SetState(stub, context)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (q *contract) GetState(stub StateManager) (model *QueueContext, err error) {
+func (q *contract) getState(stub StateManager) (model *QueueContext, err error) {
 	existing, err := stub.GetState("QueueContext")
 	if err != nil {
-		return
+		return nil, errors.New(fmt.Sprintf("QueueContract.getState: %v", err))
 	}
 	model = new(QueueContext)
 	err = json.Unmarshal(existing, model)
 	if err != nil {
-		return nil, err
+		return nil, errors.New(fmt.Sprintf("QueueContract.getState: %v", err))
 	}
 	return
 }
 
-func (q *contract) SetState(stub StateManager, model *QueueContext) error {
+func (q *contract) setState(stub StateManager, model *QueueContext) error {
 	state, err := json.Marshal(model)
 	if err != nil {
-		return err
+		return errors.New(fmt.Sprintf("QueueContract.setState: %v", err))
 	}
 	err = stub.PutState("QueueContext", state)
 	if err != nil {
-		return err
+		return errors.New(fmt.Sprintf("QueueContract.setState: %v", err))
 	}
 	return nil
 }

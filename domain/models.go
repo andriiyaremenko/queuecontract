@@ -4,23 +4,32 @@ import (
 	_ "encoding/json"
 )
 
+type Payload map[string]interface{}
+
 type Item struct {
-	Id   string                 `json:"id"`
-	Data map[string]interface{} `json:"data"`
+	Id   string  `json:"id"`
+	Data Payload `json:"data"`
 }
 
 type QueueContext struct {
-	Items   []Item   `json:"items"`
-	Filters []string `json:"filters"`
-	Sorts   []string `json:"sorts"`
+	Items []Item `json:"items"`
 }
 
+type FilterRequest map[string][]interface{}
+
+type SortRequest map[string][]interface{}
+
 type Sort struct {
-	F    func(Item, Item) bool
+	F    func(Item, Item, ...interface{}) bool
 	Name string
 }
 
 type Filter struct {
-	F    func(Item) bool
+	F    func(Item, ...interface{}) bool
+	Name string
+}
+
+type Validator struct {
+	F    func(Payload) error
 	Name string
 }
